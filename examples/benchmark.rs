@@ -1,6 +1,6 @@
 use anyhow::Result;
-use hydra_kit::helper::*;
-use hydra_kit::hydra::*;
+use hydra_sdk_rust::helper::*;
+use hydra_sdk_rust::hydra::*;
 use pallas::crypto::key::ed25519::SecretKey;
 use pallas::ledger::addresses::Address;
 use pallas::txbuilder::{BuildConway, Output, StagingTransaction};

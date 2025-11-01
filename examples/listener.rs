@@ -1,6 +1,6 @@
 use anyhow::Result;
-use hydra_kit::event_type::*;
-use hydra_kit::hydra::{HydraProvider, HydraProviderConfig};
+use hydra_sdk_rust::event_type::*;
+use hydra_sdk_rust::hydra::{HydraProvider, HydraProviderConfig};
 
 #[tokio::main]
 async fn main() -> Result<()> {

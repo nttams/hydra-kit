@@ -1,6 +1,6 @@
-# hydra-kit
+# hydra-sdk-rust
 
-hydra-kit is a Rust SDK for building applications that interact with Hydra, Cardano's layer 2 protocol for fast, secure off-chain transaction processing. Hydra brings Cardano's safety guarantees to high-speed environments, and Rust is the perfect match, offering performance and safety
+hydra-sdk-rust is a Rust SDK for building applications that interact with Hydra, Cardano's layer 2 protocol for fast, secure off-chain transaction processing. Hydra brings Cardano's safety guarantees to high-speed environments, and Rust is the perfect match, offering performance and safety
 
 ⚠️ Warning: this project is under heavy development, things will change frequently
 

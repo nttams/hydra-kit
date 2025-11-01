@@ -1,5 +1,5 @@
 use anyhow::Result;
-use hydra_kit::hydra::*;
+use hydra_sdk_rust::hydra::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {

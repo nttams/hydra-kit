@@ -11,22 +11,22 @@ hydra-sdk-rust is a Rust SDK for building applications that interact with Hydra,
 - [X] Websocket commands  
   - [X] Init head  
   - [X] Close head  
-  - [ ] Increment  
-  - [ ] Recover  
+  - [x] Increment  
+  - [x] Recover  
 - [x] HTTP interface
   - [X] Get snapshot  
   - [X] Submit transaction
-- [ ] Websocket interface
+- [x] Websocket interface
   - [X] Support adding callbacks for each type of websocket event
-  - [ ] Support all event types
+  - [x] Support all event types
     - [X] SnapshotConfirmed
     - [X] TxValid
     - [X] TxInvalid
     - [X] ValidationError
     - [X] Greetings
-    - [ ] Other messages
-- [ ] Prometheus metrics
-    - [ ] Number of nodes
-    - [ ] Websocket event per second
-    - [ ] Current utxo count
+    - [x] Other messages
+- [x] Prometheus metrics
+    - [x] Number of nodes
+    - [x] Websocket event per second
+    - [x] Current utxo count
 - [ ] Wallet integration

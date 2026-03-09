@@ -1,6 +1,9 @@
 use crate::event_type::*;
 use crate::types::*;
 use anyhow::{Result, anyhow};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
 use futures_util::sink::SinkExt;
 use futures_util::stream::SplitSink;
 use futures_util::stream::SplitStream;
@@ -20,11 +23,47 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 
+#[derive(Clone)]
+pub struct Metrics {
+    pub connected_nodes: Arc<AtomicUsize>,
+    pub ws_events_total: Arc<AtomicU64>,
+    pub current_utxo_count: Arc<AtomicUsize>,
+    pub start_time: Option<Instant>,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            connected_nodes: Arc::new(AtomicUsize::new(0)),
+            ws_events_total: Arc::new(AtomicU64::new(0)),
+            current_utxo_count: Arc::new(AtomicUsize::new(0)),
+            start_time: Some(Instant::now()),
+        }
+    }
+}
+
+impl Metrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn events_per_second(&self) -> f64 {
+        if let Some(start) = self.start_time {
+            let elapsed = start.elapsed().as_secs_f64();
+            if elapsed > 0.0 {
+                return self.ws_events_total.load(Ordering::Relaxed) as f64 / elapsed;
+            }
+        }
+        0.0
+    }
+}
+
 pub struct HydraProvider {
     http_client: Client,
     ws_writer: Option<SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>>,
     cfg: HydraProviderConfig,
     pub listener: Listener,
+    pub metrics: Metrics,
 }
 
 #[derive(Default, Clone)]
@@ -33,7 +72,7 @@ pub struct Listener {
     pub on_snapshot: Option<fn(SnapshotConfirmed)>,
     pub on_tx_valid: Option<fn(TxValid)>,
     pub on_tx_invalid: Option<fn(TxInvalid)>,
-    // TODO: add more events
+    pub on_any_event: Option<fn(EventType)>,
 }
 
 pub struct HydraProviderConfig {
@@ -46,6 +85,7 @@ impl HydraProvider {
             cfg: cfg,
             http_client: Client::new(),
             listener: Listener::default(),
+            metrics: Metrics::default(),
             ws_writer: None,
         }
     }
@@ -62,17 +102,20 @@ impl HydraProvider {
         self.ws_writer = Some(writer);
 
         let listener = self.listener.clone();
+        let metrics = self.metrics.clone();
 
         tokio::spawn(async move {
-            Self::start_listening(listener, reader).await;
+            Self::start_listening(listener, metrics, reader).await;
         });
         Ok(())
     }
 
     async fn start_listening(
         listener: Listener,
+        metrics: Metrics,
         mut reader: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     ) {
+        metrics.connected_nodes.fetch_add(1, Ordering::SeqCst);
         while let Some(msg_result) = reader.next().await {
             let msg = match msg_result {
                 Ok(msg) => msg,
@@ -81,32 +124,35 @@ impl HydraProvider {
                     break;
                 }
             };
+            metrics.ws_events_total.fetch_add(1, Ordering::Relaxed);
 
             match msg {
                 Message::Text(text) => match serde_json::from_str::<EventType>(&text) {
-                    Ok(snapshot) => match snapshot {
-                        EventType::SnapshotConfirmed(v) => {
-                            if let Some(func) = listener.on_snapshot {
-                                func(v);
-                            };
+                    Ok(event) => {
+                        if let EventType::SnapshotConfirmed(ref v) = event {
+                            metrics.current_utxo_count.store(v.snapshot.utxo.len(), Ordering::Relaxed);
                         }
-                        EventType::TxValid(v) => {
-                            if let Some(func) = listener.on_tx_valid {
-                                func(v);
-                            };
+                        
+                        // Fire specialized hooks
+                        match &event {
+                            EventType::SnapshotConfirmed(v) => {
+                                if let Some(func) = listener.on_snapshot { func(v.clone()); }
+                            }
+                            EventType::TxValid(v) => {
+                                if let Some(func) = listener.on_tx_valid { func(v.clone()); }
+                            }
+                            EventType::Greetings(v) => {
+                                if let Some(func) = listener.on_greeting { func(v.clone()); }
+                            }
+                            EventType::TxInvalid(v) => {
+                                if let Some(func) = listener.on_tx_invalid { func(v.clone()); }
+                            }
+                            _ => {}
                         }
-                        EventType::Greetings(v) => {
-                            if let Some(func) = listener.on_greeting {
-                                func(v);
-                            };
-                        }
-                        EventType::TxInvalid(v) => {
-                            if let Some(func) = listener.on_tx_invalid {
-                                func(v);
-                            };
-                        }
-                        _ => {
-                            // TODO: handle other events
+                        
+                        // Fire general hook
+                        if let Some(func) = listener.on_any_event {
+                            func(event);
                         }
                     },
                     Err(err) => {
@@ -122,6 +168,7 @@ impl HydraProvider {
                 }
             }
         }
+        metrics.connected_nodes.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub async fn submit_via_http(&self, tx_hex: &str) -> Result<()> {
@@ -171,6 +218,26 @@ impl HydraProvider {
 
     pub async fn close_head(&mut self) -> Result<()> {
         self.send_command("Close").await
+    }
+
+    pub async fn recover(&mut self, tx_id: &str) -> Result<()> {
+        let msg = Message::text(format!(r#"{{"tag":"Recover","recoverTxId":"{}"}}"#, tx_id));
+        let writer = self
+            .ws_writer
+            .as_mut()
+            .ok_or_else(|| anyhow!("WebSocket writer not initialized"))?;
+        writer.send(msg).await?;
+        Ok(())
+    }
+
+    pub async fn increment(&mut self, tx_id: &str) -> Result<()> {
+        let msg = Message::text(format!(r#"{{"tag":"IncrementTx","depositTxId":"{}"}}"#, tx_id));
+        let writer = self
+            .ws_writer
+            .as_mut()
+            .ok_or_else(|| anyhow!("WebSocket writer not initialized"))?;
+        writer.send(msg).await?;
+        Ok(())
     }
 
     pub async fn get_snapshot(
